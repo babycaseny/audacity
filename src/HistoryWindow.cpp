@@ -29,6 +29,7 @@ undo memory so as to free up space.
 #include <wx/stattext.h>
 #include <wx/textctrl.h>
 
+#include "AudioIO.h"
 #include "../images/Arrow.xpm"
 #include "../images/Empty9x16.xpm"
 #include "HistoryWindow.h"
@@ -38,6 +39,7 @@ undo memory so as to free up space.
 
 enum {
    ID_AVAIL = 1000,
+   ID_TOTAL,
    ID_LEVELS,
    ID_DISCARD
 };
@@ -59,6 +61,7 @@ HistoryWindow::HistoryWindow(AudacityProject *parent, UndoManager *manager):
    mManager = manager;
    mProject = parent;
    mSelected = 0;
+   mAudioIOBusy = false;
 
    wxImageList *imageList = new wxImageList(9, 16);
    imageList->Add(wxIcon(empty9x16_xpm));
@@ -71,27 +74,30 @@ HistoryWindow::HistoryWindow(AudacityProject *parent, UndoManager *manager):
    S.SetBorder(5);
    S.StartVerticalLay(true);
    {
-      S.StartStatic(_("Manage History"), 1);
+      S.StartStatic(_("&Manage History"), 1);
       {
          mList = S.AddListControlReportMode();
          // Do this BEFORE inserting the columns.  On the Mac at least, the
          // columns are deleted and later InsertItem()s will cause Audacity to crash.
          mList->SetSingleStyle(wxLC_SINGLE_SEL);
          mList->InsertColumn(0, _("Action"), wxLIST_FORMAT_LEFT, 300);
-         mList->InsertColumn(1, _("Size"), wxLIST_FORMAT_LEFT, 65);
+         mList->InsertColumn(1, _("Size"), wxLIST_FORMAT_LEFT, 85);
 
          //Assign rather than set the image list, so that it is deleted later.
          mList->AssignImageList(imageList, wxIMAGE_LIST_SMALL);
 
          S.StartMultiColumn(3, wxCENTRE);
          {
+            // FIXME: Textbox labels have inconsistent capitalization
+            mTotal = S.Id(ID_TOTAL).AddTextBox(_("&Total space used"), wxT("0"), 10);
+            mTotal->Connect(wxEVT_KEY_DOWN, wxKeyEventHandler(HistoryWindow::OnChar));
+            S.AddVariableText(wxT(""))->Hide();
+
             mAvail = S.Id(ID_AVAIL).AddTextBox(_("&Undo Levels Available"), wxT("0"), 10);
             mAvail->Connect(wxEVT_KEY_DOWN, wxKeyEventHandler(HistoryWindow::OnChar));
             S.AddVariableText(wxT(""))->Hide();
-         }
 
-         {
-            S.AddPrompt(_("Levels To Discard"));
+            S.AddPrompt(_("&Levels To Discard"));
             mLevels = new wxSpinCtrl(this,
                                      ID_LEVELS,
                                      wxT("1"),
@@ -109,7 +115,7 @@ HistoryWindow::HistoryWindow(AudacityProject *parent, UndoManager *manager):
       }
       S.EndStatic();
 
-      S.StartHorizontalLay(wxALIGN_BOTTOM | wxALIGN_RIGHT, false);
+      S.StartHorizontalLay(wxALIGN_RIGHT, false);
       {
          S.SetBorder(10);
          S.Id(wxID_OK).AddButton(_("&OK"))->SetDefault();
@@ -125,11 +131,43 @@ HistoryWindow::HistoryWindow(AudacityProject *parent, UndoManager *manager):
    SetMinSize(GetSize());
    mList->SetColumnWidth(0, mList->GetClientSize().x - mList->GetColumnWidth(1));
    mList->SetTextColour(wxSystemSettings::GetColour(wxSYS_COLOUR_WINDOWTEXT));
+
+   wxTheApp->Connect(EVT_AUDIOIO_PLAYBACK,
+                     wxCommandEventHandler(HistoryWindow::OnAudioIO),
+                     NULL,
+                     this);
+
+   wxTheApp->Connect(EVT_AUDIOIO_CAPTURE,
+                     wxCommandEventHandler(HistoryWindow::OnAudioIO),
+                     NULL,
+                     this);
 }
 
 HistoryWindow::~HistoryWindow()
 {
+   wxTheApp->Disconnect(EVT_AUDIOIO_PLAYBACK,
+                        wxCommandEventHandler(HistoryWindow::OnAudioIO),
+                        NULL,
+                        this);
+
+   wxTheApp->Disconnect(EVT_AUDIOIO_CAPTURE,
+                        wxCommandEventHandler(HistoryWindow::OnAudioIO),
+                        NULL,
+                        this);
+
    mAvail->Disconnect(wxEVT_KEY_DOWN, wxKeyEventHandler(HistoryWindow::OnChar));
+}
+
+void HistoryWindow::OnAudioIO(wxCommandEvent& evt)
+{
+   evt.Skip();
+
+   if (evt.GetInt() != 0)
+      mAudioIOBusy = true;
+   else
+      mAudioIOBusy = false;
+
+   mDiscard->Enable(!mAudioIOBusy);
 }
 
 void HistoryWindow::UpdateDisplay()
@@ -146,14 +184,17 @@ void HistoryWindow::DoUpdate()
 
    mList->DeleteAllItems();
 
+   wxLongLong_t total = 0;
    mSelected = mManager->GetCurrentState() - 1;
    for (i = 0; i < (int)mManager->GetNumStates(); i++) {
       wxString desc, size;
 
-      mManager->GetLongDescription(i + 1, &desc, &size);
+      total += mManager->GetLongDescription(i + 1, &desc, &size);
       mList->InsertItem(i, desc, i == mSelected ? 1 : 0);
       mList->SetItem(i, 1, size);
    }
+
+   mTotal->SetValue(Internat::FormatSize(total));
 
    mList->EnsureVisible(mSelected);
 
@@ -202,11 +243,18 @@ void HistoryWindow::OnDiscard(wxCommandEvent & WXUNUSED(event))
    while(--i >= 0)
       mList->DeleteItem(i);
 
-   UpdateLevels();
+   DoUpdate();
 }
 
 void HistoryWindow::OnItemSelected(wxListEvent &event)
 {
+   if (mAudioIOBusy) {
+      mList->SetItemState(mSelected,
+                       wxLIST_STATE_FOCUSED | wxLIST_STATE_SELECTED,
+                       wxLIST_STATE_FOCUSED | wxLIST_STATE_SELECTED);
+      return;
+   }
+
    int selected = event.GetIndex();
    int i;
 

@@ -46,10 +46,9 @@
 
 # Mac Specific
 .DS_Store
-project.xcworkspace
 xcuserdata
 *.xcconfig
-mac/Info.plist.h
+mac/build
 
 # Windows specific
 win/Debug
@@ -61,3 +60,5 @@ win/Projects/*/Release
 src/RevisionIdent.h
 win/resetPrefs.txt
 
+# Emacs backup files
+*~

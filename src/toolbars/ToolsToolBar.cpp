@@ -33,6 +33,7 @@
 
 
 #include "../Audacity.h"
+#include "ToolsToolBar.h"
 
 // For compilers that support precompilation, includes "wx/wx.h".
 #include <wx/wxprec.h>
@@ -46,14 +47,18 @@
 #include <wx/tooltip.h>
 
 #include "MeterToolBar.h"
-#include "ToolsToolBar.h"
 
 #include "../Prefs.h"
 #include "../AllThemeResources.h"
 #include "../ImageManipulation.h"
 #include "../Project.h"
+#ifdef EXPERIMENTAL_SCRUBBING_BASIC
+#include "../TrackPanel.h"
+#endif
 #include "../Theme.h"
 #include "../widgets/AButton.h"
+
+#include "../Experimental.h"
 
 IMPLEMENT_CLASS(ToolsToolBar, ToolBar);
 
@@ -85,9 +90,9 @@ ToolsToolBar::ToolsToolBar()
 
       mMessageOfTool[selectTool] =
 #if defined(__WXMAC__)
-         _("Click and drag to select audio, Command-Click and drag to scrub, Shift-Command-Click and drag to seek")
+         _("Click and drag to select audio, Command-Click to scrub, Command-Double-Click to scroll-scrub, Command-drag to seek")
 #else
-         _("Click and drag to select audio, Ctrl-Click and drag to scrub, Shift-Ctrl-Click and drag to seek")
+         _("Click and drag to select audio, Ctrl-Click to scrub, Ctrl-Double-Click to scroll-scrub, Ctrl-drag to seek")
 #endif
          ;
 
@@ -215,6 +220,18 @@ void ToolsToolBar::SetCurrentTool(int tool, bool show)
    //In multi-mode the current tool is shown by the
    //cursor icon.  The buttons are not updated.
 
+#ifdef EXPERIMENTAL_SCRUBBING_BASIC
+   if (tool != selectTool) {
+      AudacityProject *p = GetActiveProject();
+      if (p) {
+         TrackPanel *tp = p->GetTrackPanel();
+         if (tp) {
+            tp->StopScrubbing();
+         }
+      }
+   }
+#endif
+
    bool leavingMulticlipMode =
       IsDown(multiTool) && show && tool != multiTool;
 
@@ -277,6 +294,18 @@ void ToolsToolBar::OnTool(wxCommandEvent & evt)
          mTool[i]->PushDown();
       else
          mTool[i]->PopUp();
+
+#ifdef EXPERIMENTAL_SCRUBBING_BASIC
+   if (0 != mCurrentTool) {
+      AudacityProject *p = GetActiveProject();
+      if (p) {
+         TrackPanel *tp = p->GetTrackPanel();
+         if (tp) {
+            tp->StopScrubbing();
+         }
+      }
+   }
+#endif
 
    RedrawAllProjects();
 

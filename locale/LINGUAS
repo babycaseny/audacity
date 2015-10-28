@@ -6,7 +6,7 @@ bg
 bn
 bs
 ca
-ca@valencia
+ca_ES@valencia
 cs
 cy
 da
@@ -37,7 +37,7 @@ nb
 nl
 oc
 pl
-pt
+pt_PT
 pt_BR
 ro
 ru
@@ -51,5 +51,5 @@ tg
 tr
 uk
 vi
-zh
+zh_CN
 zh_TW

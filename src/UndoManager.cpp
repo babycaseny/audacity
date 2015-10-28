@@ -28,7 +28,6 @@ UndoManager
 #include "Diags.h"
 #include "Internat.h"
 #include "Sequence.h"
-#include "Track.h"
 #include "WaveTrack.h"          // temp
 #include "NoteTrack.h"  // for Sonify* function declarations
 #include "Diags.h"
@@ -87,7 +86,7 @@ void UndoManager::CalculateSpaceUsage()
 
                // Accumulate space used by the file if the file didn't exist
                // in the previous level
-               if (!prev->count(file))
+               if (prev->count(file) == 0 && cur->count(file) == 0)
                {
                   space[i] += file->GetSpaceUsage().GetValue();
                }
@@ -108,8 +107,8 @@ void UndoManager::CalculateSpaceUsage()
    TIMER_STOP( space_calc );
 }
 
-void UndoManager::GetLongDescription(unsigned int n, wxString *desc,
-                                     wxString *size)
+wxLongLong_t UndoManager::GetLongDescription(unsigned int n, wxString *desc,
+                                             wxString *size)
 {
    n -= 1; // 1 based to zero based
 
@@ -119,6 +118,8 @@ void UndoManager::GetLongDescription(unsigned int n, wxString *desc,
    *desc = stack[n]->description;
 
    *size = Internat::FormatSize(space[n]);
+
+   return space[n];
 }
 
 void UndoManager::GetShortDescription(unsigned int n, wxString *desc)
