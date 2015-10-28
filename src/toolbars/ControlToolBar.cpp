@@ -36,6 +36,7 @@
 
 #include "../Audacity.h"
 #include "../Experimental.h"
+#include "ControlToolBar.h"
 
 // For compilers that support precompilation, includes "wx/wx.h".
 #include <wx/wxprec.h>
@@ -46,11 +47,11 @@
 #include <wx/event.h>
 #include <wx/image.h>
 #include <wx/intl.h>
+#include <wx/statusbr.h>
 #include <wx/timer.h>
 #endif
 #include <wx/tooltip.h>
 
-#include "ControlToolBar.h"
 #include "TranscriptionToolBar.h"
 #include "MeterToolBar.h"
 
@@ -61,7 +62,7 @@
 #include "../Prefs.h"
 #include "../Project.h"
 #include "../Theme.h"
-#include "../Track.h"
+#include "../WaveTrack.h"
 #include "../widgets/AButton.h"
 #include "../widgets/Meter.h"
 
@@ -99,6 +100,13 @@ ControlToolBar::ControlToolBar()
 
    mSizer = NULL;
    mCutPreviewTracks = NULL;
+
+   /* i18n-hint: These are strings for the status bar, and indicate whether Audacity
+   is playing or recording or stopped, and whether it is paused. */
+   mStatePlay = XO("Playing");
+   mStateStop = XO("Stopped");
+   mStateRecord = XO("Recording");
+   mStatePause = XO("Paused");
 }
 
 ControlToolBar::~ControlToolBar()
@@ -433,6 +441,7 @@ void ControlToolBar::SetPlay(bool down, bool looped, bool cutPreview)
       mPlay->SetAlternateIdx(0);
    }
    EnableDisableButtons();
+   UpdateStatusBar();
 }
 
 void ControlToolBar::SetStop(bool down)
@@ -638,13 +647,8 @@ int ControlToolBar::PlayPlayRegion(const SelectedRegion &selectedRegion,
       else {
          // msmeyer: Show error message if stream could not be opened
          wxMessageBox(
-#if wxCHECK_VERSION(3,0,0)
             _("Error while opening sound device. "
             "Please check the playback device settings and the project sample rate."),
-#else
-            _("Error while opening sound device. "
-            wxT("Please check the playback device settings and the project sample rate.")),
-#endif
             _("Error"), wxOK | wxICON_EXCLAMATION, this);
       }
    }
@@ -714,11 +718,13 @@ void ControlToolBar::OnPlay(wxCommandEvent & WXUNUSED(evt))
    if (p) p->TP_DisplaySelection();
 
    PlayDefault();
+   UpdateStatusBar();
 }
 
 void ControlToolBar::OnStop(wxCommandEvent & WXUNUSED(evt))
 {
    StopPlaying();
+   UpdateStatusBar();
 }
 
 void ControlToolBar::PlayDefault()
@@ -740,7 +746,7 @@ void ControlToolBar::StopPlaying(bool stopStream /* = true*/)
    SetPlay(false);
    SetRecord(false);
 
-   #ifdef AUTOMATED_INPUT_LEVEL_ADJUSTMENT
+   #ifdef EXPERIMENTAL_AUTOMATED_INPUT_LEVEL_ADJUSTMENT
       gAudioIO->AILADisable();
    #endif
 
@@ -768,6 +774,12 @@ void ControlToolBar::StopPlaying(bool stopStream /* = true*/)
          meter->Clear();
       }
    }
+}
+
+void ControlToolBar::Pause()
+{
+   wxCommandEvent dummy;
+   OnPause(dummy);
 }
 
 void ControlToolBar::OnRecord(wxCommandEvent &evt)
@@ -917,7 +929,7 @@ void ControlToolBar::OnRecord(wxCommandEvent &evt)
       }
 
       //Automated Input Level Adjustment Initialization
-      #ifdef AUTOMATED_INPUT_LEVEL_ADJUSTMENT
+      #ifdef EXPERIMENTAL_AUTOMATED_INPUT_LEVEL_ADJUSTMENT
          gAudioIO->AILAInitialize();
       #endif
          
@@ -972,6 +984,7 @@ void ControlToolBar::OnRecord(wxCommandEvent &evt)
          SetRecord(false);
       }
    }
+   UpdateStatusBar();
 }
 
 
@@ -996,6 +1009,7 @@ void ControlToolBar::OnPause(wxCommandEvent & WXUNUSED(evt))
    }
 
    gAudioIO->SetPaused(mPaused);
+   UpdateStatusBar();
 }
 
 void ControlToolBar::OnRewind(wxCommandEvent & WXUNUSED(evt))
@@ -1067,5 +1081,56 @@ void ControlToolBar::ClearCutPreviewTracks()
       delete mCutPreviewTracks;
       mCutPreviewTracks = NULL;
    }
+}
+
+// works out the width of the field in the status bar needed for the state (eg play, record pause)
+int ControlToolBar::WidthForStatusBar(wxStatusBar* const sb)
+{
+   int xMax = 0;
+   int x, y;
+
+   sb->GetTextExtent(wxString(wxGetTranslation(mStatePlay)) + wxT(" ") +
+                     wxString(wxGetTranslation(mStatePause)) + wxT("."), &x, &y);
+   if (x > xMax)
+      xMax = x;
+
+   sb->GetTextExtent(wxString(wxGetTranslation(mStateStop)) + wxT(" ") +
+                     wxString(wxGetTranslation(mStatePause)) + wxT("."), &x, &y);
+   if (x > xMax)
+      xMax = x;
+
+   sb->GetTextExtent(wxString(wxGetTranslation(mStateRecord)) + wxT(" ") +
+                     wxString(wxGetTranslation(mStatePause)) + wxT("."), &x, &y);
+   if (x > xMax)
+      xMax = x;
+
+   return xMax + 30;    // added constant needed because xMax isn't large enough for some reason, plus some space.
+}
+
+wxString ControlToolBar::StateForStatusBar()
+{
+   wxString state;
+
+   if (mPlay->IsDown())
+      state = wxGetTranslation(mStatePlay);
+   else if (mRecord->IsDown())
+      state = wxGetTranslation(mStateRecord);
+   else
+      state = wxGetTranslation(mStateStop);
+
+   if (mPause->IsDown())
+   {
+      state.Append(wxT(" "));
+      state.Append(wxGetTranslation(mStatePause));
+   }
+
+   state.Append(wxT("."));
+
+   return state;
+}
+
+void ControlToolBar::UpdateStatusBar()
+{
+   GetActiveProject()->GetStatusBar()->SetStatusText(StateForStatusBar(), stateStatusBarField);
 }
 

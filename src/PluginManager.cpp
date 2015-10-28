@@ -48,6 +48,8 @@
 
 #include <wx/arrimpl.cpp>
 
+#include "Experimental.h"
+
 WX_DECLARE_STRING_HASH_MAP(wxArrayString, ProviderMap);
 
 // ============================================================================
@@ -122,7 +124,7 @@ public:
    // or child.
    virtual wxAccStatus GetValue( int childId, wxString *strValue );
 
-   void SetSelected( int item );
+   void SetSelected( int item, bool focused = true );
 
 private:
    wxListCtrl *mParent;
@@ -140,7 +142,7 @@ CheckListAx::~CheckListAx()
 {
 }
 
-void CheckListAx::SetSelected( int item )
+void CheckListAx::SetSelected( int item, bool focused )
 {
    if (mLastId != -1)
    {
@@ -153,10 +155,13 @@ void CheckListAx::SetSelected( int item )
 
    if (item != -1)
    {
-      NotifyEvent( wxACC_EVENT_OBJECT_FOCUS,
-                  mParent,
-                  wxOBJID_CLIENT,
-                  item + 1 );
+      if (focused)
+      {
+         NotifyEvent( wxACC_EVENT_OBJECT_FOCUS,
+                     mParent,
+                     wxOBJID_CLIENT,
+                     item + 1 );
+      }
 
       NotifyEvent( wxACC_EVENT_OBJECT_SELECTION,
                   mParent,
@@ -473,14 +478,13 @@ END_EVENT_TABLE()
 PluginRegistrationDialog::PluginRegistrationDialog(wxWindow *parent, EffectType type)
 :  wxDialog(parent,
             wxID_ANY,
-            _("Plugin Manager: Effects"),
+            _("Plug-in Manager: Effects, Generators and Analyzers"),
             wxDefaultPosition, wxDefaultSize,
             wxDEFAULT_DIALOG_STYLE | wxRESIZE_BORDER)
 {
    mType = type;
    mEffects = NULL;
-   SetLabel(_("Register Effects"));         // Provide visual label
-   SetName(_("Register Effects"));          // Provide audible label
+   SetName(GetTitle());
 
    mStates.SetCount(STATE_COUNT);
    mStates[STATE_Enabled] = _("Enabled");
@@ -516,25 +520,42 @@ void PluginRegistrationDialog::PopulateOrExchange(ShuttleGui &S)
    {
       /*i18n-hint: The dialog shows a list of plugins with check-boxes 
        beside each one.*/
-      S.StartStatic(_("Select Plugins then press ENTER to Install"), true);
+//      S.StartStatic(_("Effects"), true);
+      S.StartVerticalLay();
       {
-         S.StartHorizontalLay(wxALIGN_LEFT,0 );
+         S.StartHorizontalLay(wxEXPAND, 0);
          {
-            wxRadioButton* rb;
-            /* i18n-hint: This is before radio buttons selecting which effects to show */
-            S.AddPrompt(_("Show:"));
-            /* i18n-hint: Radio button to show all effects */
-            rb = S.Id(ID_ShowAll).AddRadioButton(_("&All"));
-            rb->SetName(_("Show all"));
-            /* i18n-hint: Radio button to show just the currently disabled effects */
-            rb = S.Id(ID_ShowDisabled).AddRadioButtonToGroup(_("D&isabled"));
-            rb->SetName(_("Show disabled"));
-            /* i18n-hint: Radio button to show just the currently enabled effects */
-            rb = S.Id(ID_ShowEnabled).AddRadioButtonToGroup(_("E&nabled"));
-            rb->SetName(_("Show enabled"));
-            /* i18n-hint: Radio button to show just the newly discovered effects */
-            rb = S.Id(ID_ShowNew).AddRadioButtonToGroup(_("Ne&w"));
-            rb->SetName(_("Show new"));
+            S.StartHorizontalLay(wxALIGN_LEFT, 0);
+            {
+               S.AddPrompt(_("Select effects, click the Enable or Disable button, then click OK."));
+            }
+            S.EndHorizontalLay();
+
+            S.StartHorizontalLay(wxCENTER, 1);
+            {
+               S.AddSpace(1);
+            }
+            S.EndHorizontalLay();
+
+            S.StartHorizontalLay(wxALIGN_NOT | wxALIGN_LEFT, 0);
+            {
+               wxRadioButton* rb;
+               /* i18n-hint: This is before radio buttons selecting which effects to show */
+               S.AddPrompt(_("Show:"));
+               /* i18n-hint: Radio button to show all effects */
+               rb = S.Id(ID_ShowAll).AddRadioButton(_("&All"));
+               rb->SetName(_("Show all"));
+               /* i18n-hint: Radio button to show just the currently disabled effects */
+               rb = S.Id(ID_ShowDisabled).AddRadioButtonToGroup(_("D&isabled"));
+               rb->SetName(_("Show disabled"));
+               /* i18n-hint: Radio button to show just the currently enabled effects */
+               rb = S.Id(ID_ShowEnabled).AddRadioButtonToGroup(_("E&nabled"));
+               rb->SetName(_("Show enabled"));
+               /* i18n-hint: Radio button to show just the newly discovered effects */
+               rb = S.Id(ID_ShowNew).AddRadioButtonToGroup(_("Ne&w"));
+               rb->SetName(_("Show new"));
+            }
+            S.EndHorizontalLay();
          }
          S.EndHorizontalLay();
 
@@ -552,7 +573,7 @@ void PluginRegistrationDialog::PopulateOrExchange(ShuttleGui &S)
          mEffects->InsertColumn(COL_State, _("State"));
          mEffects->InsertColumn(COL_Path, _("Path"));
 
-         S.StartHorizontalLay(wxALIGN_LEFT | wxALIGN_CENTER_VERTICAL | wxEXPAND, 0);
+         S.StartHorizontalLay(wxALIGN_LEFT | wxEXPAND, 0);
          {
             S.Id(ID_SelectAll).AddButton(_("&Select All"));
             S.Id(ID_ClearAll).AddButton(_("C&lear All"));
@@ -568,7 +589,8 @@ void PluginRegistrationDialog::PopulateOrExchange(ShuttleGui &S)
          }
          S.EndHorizontalLay();
       }
-      S.EndStatic();
+//      S.EndStatic();
+      S.EndVerticalLay();
 
       S.AddStandardButtons(eOkButton | eCancelButton);
    }
@@ -726,10 +748,10 @@ void PluginRegistrationDialog::RegenerateEffectsList(int filter)
    if (mEffects->GetItemCount() > 0)
    {
       // Make sure first item is selected/focused.
-      mEffects->SetFocus();
+//      mEffects->SetFocus();
       mEffects->SetItemState(0, wxLIST_STATE_FOCUSED|wxLIST_STATE_SELECTED, wxLIST_STATE_FOCUSED|wxLIST_STATE_SELECTED);
 #if wxUSE_ACCESSIBILITY
-      mAx->SetSelected(0);
+      mAx->SetSelected(0, false);
 #endif
    }
 }
@@ -943,9 +965,12 @@ void PluginRegistrationDialog::OnOK(wxCommandEvent & WXUNUSED(evt))
 
    wxString msg;
    msg.Printf(_("Enabling effects:\n\n%s"), last3.c_str());
-   
-   ProgressDialog progress(_("Plugin Manager: Effects"), msg, pdlgHideStopButton);
-   progress.CenterOnParent();
+
+   // Make sure the progress dialog is deleted before we call EndModal() or
+   // we will leave the project window in an unusable state on OSX.
+   // See bug #1192.
+   ProgressDialog *progress = new ProgressDialog(GetTitle(), msg, pdlgHideStopButton);
+   progress->CenterOnParent();
 
    int i = 0;
    for (ItemDataMap::iterator iter = mItems.begin(); iter != mItems.end(); ++iter)
@@ -956,7 +981,7 @@ void PluginRegistrationDialog::OnOK(wxCommandEvent & WXUNUSED(evt))
       if (item.state == STATE_Enabled && item.plugs[0]->GetPluginType() == PluginTypeStub)
       {
          last3 = last3.AfterFirst(wxT('\n')) + item.path + wxT("\n");
-         int status = progress.Update(++i, enableCount, wxString::Format(_("Enabling effect:\n\n%s"), last3.c_str()));
+         int status = progress->Update(++i, enableCount, wxString::Format(_("Enabling effect:\n\n%s"), last3.c_str()));
          if (!status)
          {
             break;
@@ -984,12 +1009,17 @@ void PluginRegistrationDialog::OnOK(wxCommandEvent & WXUNUSED(evt))
       }
       else if (item.state != STATE_New)
       {
-         item.plugs[0]->SetEnabled(item.state == STATE_Enabled);
-         item.plugs[0]->SetValid(item.valid);
+         for (size_t j = 0, cnt = item.plugs.GetCount(); j < cnt; j++)
+         {
+            item.plugs[j]->SetEnabled(item.state == STATE_Enabled);
+            item.plugs[j]->SetValid(item.valid);
+         }
       }
    }
 
    pm.Save();
+
+   delete progress;
 
    EndModal(wxID_OK);
 }
@@ -1178,9 +1208,9 @@ void PluginDescriptor::SetValid(bool valid)
 
 // Effects
 
-const wxString & PluginDescriptor::GetEffectFamily() const
+wxString PluginDescriptor::GetEffectFamily(bool translate) const
 {
-   return mEffectFamily;
+   return translate ? wxString(wxGetTranslation(mEffectFamily)) : mEffectFamily;
 }
 
 EffectType PluginDescriptor::GetEffectType() const
@@ -1325,14 +1355,17 @@ void PluginDescriptor::SetImporterExtensions(const wxArrayString & extensions)
 //
 // ============================================================================
 
-bool PluginManager::IsPluginRegistered(const PluginID & ID)
+bool PluginManager::IsPluginRegistered(const wxString & path)
 {
-   if (mPlugins.find(ID) == mPlugins.end())
+   for (PluginMap::iterator iter = mPlugins.begin(); iter != mPlugins.end(); ++iter)
    {
-      return false;
+      if (iter->second.GetPath().IsSameAs(path))
+      {
+         return true;
+      }
    }
 
-   return true;
+   return false;
 }
 
 const PluginID & PluginManager::RegisterPlugin(ModuleInterface *module)
@@ -2055,7 +2088,7 @@ void PluginManager::SaveGroup(PluginType type)
                stype = KEY_EFFECTTYPE_PROCESS;
             }
             mRegistry->Write(KEY_EFFECTTYPE, stype);
-            mRegistry->Write(KEY_EFFECTFAMILY, plug.GetEffectFamily());
+            mRegistry->Write(KEY_EFFECTFAMILY, plug.GetEffectFamily(false));
             mRegistry->Write(KEY_EFFECTDEFAULT, plug.IsEffectDefault());
             mRegistry->Write(KEY_EFFECTINTERACTIVE, plug.IsEffectInteractive());
             mRegistry->Write(KEY_EFFECTREALTIME, plug.IsEffectRealtime());
@@ -2201,6 +2234,18 @@ const PluginID & PluginManager::RegisterPlugin(EffectIdentInterface *effect)
    return plug.GetID();
 }
 
+// Here solely for the purpose of Nyquist Workbench until
+// a better solution is devised.
+void PluginManager::UnregisterPlugin(const PluginID & ID)
+{
+   if (mPlugins.find(ID) == mPlugins.end())
+   {
+      return;
+   }
+
+   mPlugins.erase(ID);
+}
+
 int PluginManager::GetPluginCount(PluginType type)
 {
    int num = 0;
@@ -2273,7 +2318,7 @@ const PluginDescriptor *PluginManager::GetFirstPluginForEffectType(EffectType ty
       PluginDescriptor & plug = mPluginsIter->second;
 
       bool familyEnabled;
-      gPrefs->Read(plug.GetEffectFamily() + wxT("/Enable"), &familyEnabled, true);
+      gPrefs->Read(plug.GetEffectFamily(false) + wxT("/Enable"), &familyEnabled, true);
       if (plug.IsValid() && plug.IsEnabled() && plug.GetEffectType() == type && familyEnabled)
       {
          if (plug.IsInstantiated() && em.IsHidden(plug.GetID()))
@@ -2720,11 +2765,11 @@ wxString PluginManager::SettingsPath(const PluginID & ID, bool shared)
    
    wxString id = GetPluginTypeString(plug.GetPluginType()) +
                  wxT("_") +
-                 plug.GetEffectFamily() + // is empty for non-Effects
+                 plug.GetEffectFamily(false) + // is empty for non-Effects
                  wxT("_") +
-                 plug.GetVendor() +
+                 plug.GetVendor(false) +
                  wxT("_") +
-                 (shared ? wxT("") : plug.GetName());
+                 (shared ? wxT("") : plug.GetSymbol());
 
    return SETROOT +
           ConvertID(id) +

@@ -23,10 +23,10 @@ and TimeTrack.
 #include "Track.h"
 #include "WaveTrack.h"
 #include "NoteTrack.h"
-#include "LabelTrack.h"
 #include "Project.h"
-#include "TimeTrack.h"
 #include "DirManager.h"
+
+#include "Experimental.h"
 
 #ifdef _MSC_VER
 //Disable truncation warnings
@@ -112,6 +112,11 @@ void Track::Init(const Track &orig)
    mHeightv = orig.mHeightv;
    mYv = orig.mYv;
 #endif
+}
+
+void Track::SetSelected(bool s)
+{
+   mSelected = s;
 }
 
 void Track::Merge(const Track &orig)
@@ -270,7 +275,7 @@ void Track::ReorderList(bool resize)
 }
 #endif
 
-bool Track::IsSyncLockSelected()
+bool Track::IsSyncLockSelected() const
 {
 #ifdef EXPERIMENTAL_SYNC_LOCK
    AudacityProject *p = GetActiveProject();
@@ -278,7 +283,7 @@ bool Track::IsSyncLockSelected()
       return false;
 
    SyncLockedTracksIterator git(mList);
-   Track *t = git.First(this);
+   Track *t = git.First(const_cast<Track*>(this));
 
    if (!t) {
       // Not in a sync-locked group.

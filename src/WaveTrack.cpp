@@ -39,8 +39,6 @@ Track classes.
 
 #include "float_cast.h"
 
-#include "LabelTrack.h"
-
 #include "Envelope.h"
 #include "Sequence.h"
 #include "Spectrum.h"
@@ -54,6 +52,10 @@ Track classes.
 #include "ondemand/ODManager.h"
 
 #include "effects/TimeWarper.h"
+#include "prefs/SpectrumPrefs.h"
+#include "prefs/WaveformPrefs.h"
+
+#include "Experimental.h"
 
 using std::max;
 
@@ -72,8 +74,10 @@ WaveTrack *TrackFactory::NewWaveTrack(sampleFormat format, double rate)
    return new WaveTrack(mDirManager, format, rate);
 }
 
-WaveTrack::WaveTrack(DirManager *projDirManager, sampleFormat format, double rate):
+WaveTrack::WaveTrack(DirManager *projDirManager, sampleFormat format, double rate) :
    Track(projDirManager)
+   , mpSpectrumSettings(0)
+   , mpWaveformSettings(0)
 {
    if (format == (sampleFormat)0)
    {
@@ -84,7 +88,14 @@ WaveTrack::WaveTrack(DirManager *projDirManager, sampleFormat format, double rat
       rate = GetActiveProject()->GetRate();
    }
 
-   gPrefs->Read(wxT("/GUI/DefaultViewMode"), &mDisplay, 0);
+   // Force creation always:
+   WaveformSettings &settings = GetIndependentWaveformSettings();
+
+   mDisplay = FindDefaultViewMode();
+   if (mDisplay == obsoleteWaveformDBDisplay) {
+      mDisplay = Waveform;
+      settings.scaleType = WaveformSettings::stLogarithmic;
+   }
 
    mLegacyProjectFileOffset = 0;
 
@@ -96,17 +107,25 @@ WaveTrack::WaveTrack(DirManager *projDirManager, sampleFormat format, double rat
    SetName(GetDefaultName());
    mDisplayMin = -1.0;
    mDisplayMax = 1.0;
+   mSpectrumMin = mSpectrumMax = -1; // so values will default to settings
    mDisplayNumLocations = 0;
    mDisplayLocations = NULL;
    mDisplayNumLocationsAllocated = 0;
-   mLastDisplay = -1;
+   mLastScaleType = -1;
+   mLastdBRange = -1;
+   mAutoSaveIdent = 0;
 }
 
 WaveTrack::WaveTrack(WaveTrack &orig):
    Track(orig)
+   , mpSpectrumSettings(orig.mpSpectrumSettings
+        ? new SpectrogramSettings(*orig.mpSpectrumSettings) : 0
+     )
+   , mpWaveformSettings(orig.mpWaveformSettings 
+        ? new WaveformSettings(*orig.mpWaveformSettings) : 0)
 {
-   gPrefs->Read(wxT("/GUI/DefaultViewMode"), &mDisplay, 0);
-   mLastDisplay=-1;
+   mLastScaleType = -1;
+   mLastdBRange = -1;
 
    mLegacyProjectFileOffset = 0;
 
@@ -129,6 +148,8 @@ void WaveTrack::Init(const WaveTrack &orig)
    mDisplay = orig.mDisplay;
    mDisplayMin = orig.mDisplayMin;
    mDisplayMax = orig.mDisplayMax;
+   mSpectrumMin = orig.mSpectrumMin;
+   mSpectrumMax = orig.mSpectrumMax;
    mDisplayNumLocations = 0;
    mDisplayLocations = NULL;
    mDisplayNumLocationsAllocated = 0;
@@ -138,9 +159,14 @@ void WaveTrack::Merge(const Track &orig)
 {
    if (orig.GetKind() == Wave)
    {
-      mDisplay = ((WaveTrack &)orig).mDisplay;
-      mGain    = ((WaveTrack &)orig).mGain;
-      mPan     = ((WaveTrack &)orig).mPan;
+      const WaveTrack &wt = static_cast<const WaveTrack&>(orig);
+      mDisplay = wt.mDisplay;
+      mGain    = wt.mGain;
+      mPan     = wt.mPan;
+      SetSpectrogramSettings(wt.mpSpectrumSettings
+         ? new SpectrogramSettings(*wt.mpSpectrumSettings) : 0);
+      SetWaveformSettings
+         (wt.mpWaveformSettings ? new WaveformSettings(*wt.mpWaveformSettings) : 0);
    }
    Track::Merge(orig);
 }
@@ -158,6 +184,8 @@ WaveTrack::~WaveTrack()
    if (mDisplayLocations)
       delete [] mDisplayLocations;
 
+   delete mpSpectrumSettings;
+   delete mpWaveformSettings;
 }
 
 double WaveTrack::GetOffset() const
@@ -178,7 +206,101 @@ void WaveTrack::SetOffset(double o)
    mOffset = o;
 }
 
-void WaveTrack::GetDisplayBounds(float *min, float *max)
+//static
+WaveTrack::WaveTrackDisplay WaveTrack::FindDefaultViewMode()
+{
+   // PRL:  Bugs 1043, 1044
+   // 2.1.1 writes a new key for this preference, which got new values,
+   // to avoid confusing version 2.1.0 if it reads the preference file afterwards.
+   // Prefer the new preference key if it is present
+
+   WaveTrack::WaveTrackDisplay viewMode;
+   gPrefs->Read(wxT("/GUI/DefaultViewModeNew"), (int*)&viewMode, -1);
+
+   // Default to the old key only if not, default the value if it's not there either
+   wxASSERT(WaveTrack::MinDisplay >= 0);
+   if (viewMode < 0) {
+      int oldMode;
+      gPrefs->Read(wxT("/GUI/DefaultViewMode"), &oldMode,
+         int(WaveTrack::Waveform));
+      viewMode = WaveTrack::ConvertLegacyDisplayValue(oldMode);
+   }
+
+   // Now future-proof 2.1.1 against a recurrence of this sort of bug!
+   viewMode = WaveTrack::ValidateWaveTrackDisplay(viewMode);
+
+   return viewMode;
+}
+
+// static
+WaveTrack::WaveTrackDisplay
+WaveTrack::ConvertLegacyDisplayValue(int oldValue)
+{
+   // Remap old values.
+   enum OldValues {
+      Waveform,
+      WaveformDB,
+      Spectrogram,
+      SpectrogramLogF,
+      Pitch,
+   };
+
+   WaveTrackDisplay newValue;
+   switch (oldValue) {
+   default:
+   case Waveform:
+      newValue = WaveTrack::Waveform; break;
+   case WaveformDB:
+      newValue = WaveTrack::obsoleteWaveformDBDisplay; break;
+   case Spectrogram:
+   case SpectrogramLogF:
+   case Pitch:
+      newValue = WaveTrack::Spectrum; break;
+      /*
+   case SpectrogramLogF:
+      newValue = WaveTrack::SpectrumLogDisplay; break;
+   case Pitch:
+      newValue = WaveTrack::PitchDisplay; break;
+      */
+   }
+   return newValue;
+}
+
+// static
+WaveTrack::WaveTrackDisplay
+WaveTrack::ValidateWaveTrackDisplay(WaveTrackDisplay display)
+{
+   switch (display) {
+      // non-obsolete codes
+   case Waveform:
+   case obsoleteWaveformDBDisplay:
+   case Spectrum:
+      return display;
+
+      // obsolete codes
+   case obsolete1: // was SpectrumLogDisplay
+   case obsolete2: // was SpectralSelectionDisplay
+   case obsolete3: // was SpectralSelectionLogDisplay
+   case obsolete4: // was PitchDisplay
+      return Spectrum;
+
+      // codes out of bounds (from future prefs files?)
+   default:
+      return MinDisplay;
+   }
+}
+
+void WaveTrack::SetLastScaleType()
+{
+   mLastScaleType = GetWaveformSettings().scaleType;
+}
+
+void WaveTrack::SetLastdBRange()
+{
+   mLastdBRange = GetWaveformSettings().dBRange;
+}
+
+void WaveTrack::GetDisplayBounds(float *min, float *max) const
 {
    *min = mDisplayMin;
    *max = mDisplayMax;
@@ -188,6 +310,56 @@ void WaveTrack::SetDisplayBounds(float min, float max)
 {
    mDisplayMin = min;
    mDisplayMax = max;
+}
+
+void WaveTrack::GetSpectrumBounds(float *min, float *max) const
+{
+   const double rate = GetRate();
+
+   const SpectrogramSettings &settings = GetSpectrogramSettings();
+   const SpectrogramSettings::ScaleType type = settings.scaleType;
+
+   const float top = (rate / 2.);
+
+   float bottom;
+   if (type == SpectrogramSettings::stLinear)
+      bottom = 0.0f;
+   else if (type == SpectrogramSettings::stPeriod) {
+      // special case
+      const int half = settings.GetFFTLength() / 2;
+      // EAC returns no data for below this frequency:
+      const float bin2 = rate / half;
+      bottom = bin2;
+   }
+   else
+      // logarithmic, etc.
+      bottom = 1.0f;
+
+   {
+      float spectrumMax = mSpectrumMax;
+      if (spectrumMax < 0)
+         spectrumMax = settings.maxFreq;
+      if (spectrumMax < 0)
+         *max = top;
+      else
+         *max = std::max(bottom, std::min(top, spectrumMax));
+   }
+
+   {
+      float spectrumMin = mSpectrumMin;
+      if (spectrumMin < 0)
+         spectrumMin = settings.minFreq;
+      if (spectrumMin < 0)
+         *min = std::max(bottom, top / 1000.0f);
+      else
+         *min = std::max(bottom, std::min(top, spectrumMin));
+   }
+}
+
+void WaveTrack::SetSpectrumBounds(float min, float max)
+{
+   mSpectrumMin = min;
+   mSpectrumMax = max;
 }
 
 Track *WaveTrack::Duplicate()
@@ -554,6 +726,69 @@ bool WaveTrack::Clear(double t0, double t1)
 bool WaveTrack::ClearAndAddCutLine(double t0, double t1)
 {
    return HandleClear(t0, t1, true, false);
+}
+
+const SpectrogramSettings &WaveTrack::GetSpectrogramSettings() const
+{
+   if (mpSpectrumSettings)
+      return *mpSpectrumSettings;
+   else
+      return SpectrogramSettings::defaults();
+}
+
+SpectrogramSettings &WaveTrack::GetSpectrogramSettings()
+{
+   if (mpSpectrumSettings)
+      return *mpSpectrumSettings;
+   else
+      return SpectrogramSettings::defaults();
+}
+
+SpectrogramSettings &WaveTrack::GetIndependentSpectrogramSettings()
+{
+   if (!mpSpectrumSettings)
+      mpSpectrumSettings =
+      new SpectrogramSettings(SpectrogramSettings::defaults());
+   return *mpSpectrumSettings;
+}
+
+void WaveTrack::SetSpectrogramSettings(SpectrogramSettings *pSettings)
+{
+   if (mpSpectrumSettings != pSettings) {
+      delete mpSpectrumSettings;
+      mpSpectrumSettings = pSettings;
+   }
+}
+
+const WaveformSettings &WaveTrack::GetWaveformSettings() const
+{
+   if (mpWaveformSettings)
+      return *mpWaveformSettings;
+   else
+      return WaveformSettings::defaults();
+}
+
+WaveformSettings &WaveTrack::GetWaveformSettings()
+{
+   if (mpWaveformSettings)
+      return *mpWaveformSettings;
+   else
+      return WaveformSettings::defaults();
+}
+
+WaveformSettings &WaveTrack::GetIndependentWaveformSettings()
+{
+   if (!mpWaveformSettings)
+      mpWaveformSettings = new WaveformSettings(WaveformSettings::defaults());
+   return *mpWaveformSettings;
+}
+
+void WaveTrack::SetWaveformSettings(WaveformSettings *pSettings)
+{
+   if (mpWaveformSettings != pSettings) {
+      delete mpWaveformSettings;
+      mpWaveformSettings = pSettings;
+   }
 }
 
 //
@@ -1631,7 +1866,7 @@ AUDACITY_DLL_API sampleCount WaveTrack::TimeToLongSamples(double t0) const
    return (sampleCount)floor(t0 * mRate + 0.5);
 }
 
-double WaveTrack::LongSamplesToTime(sampleCount pos)
+double WaveTrack::LongSamplesToTime(sampleCount pos) const
 {
    return ((double)pos) / mRate;
 }
@@ -2238,7 +2473,7 @@ void WaveTrack::UpdateLocationsCache()
            it = it->GetNext())
       {
          // Add cut line expander point
-         mDisplayLocations[curpos].typ = locationCutLine;
+         mDisplayLocations[curpos].typ = WaveTrackLocation::locationCutLine;
          mDisplayLocations[curpos].pos =
             clip->GetOffset() + it->GetData()->GetOffset();
          curpos++;
@@ -2252,7 +2487,7 @@ void WaveTrack::UpdateLocationsCache()
                                           < WAVETRACK_MERGE_POINT_TOLERANCE)
          {
             // Add merge point
-            mDisplayLocations[curpos].typ = locationMergePoint;
+            mDisplayLocations[curpos].typ = WaveTrackLocation::locationMergePoint;
             mDisplayLocations[curpos].pos = clips.Item(i-1)->GetEndTime();
             mDisplayLocations[curpos].clipidx1 = mClips.IndexOf(previousClip);
             mDisplayLocations[curpos].clipidx2 = mClips.IndexOf(clip);
@@ -2493,7 +2728,7 @@ constSamplePtr WaveTrackCache::Get(sampleFormat format,
             const sampleCount len0 = mPTrack->GetBestBlockSize(start0);
             wxASSERT(len0 <= mBufferSize);
             if (!mPTrack->Get(samplePtr(mBuffers[0].data), floatSample, start0, len0))
-               return false;
+               return 0;
             mBuffers[0].start = start0;
             mBuffers[0].len = len0;
             if (!fillSecond &&
@@ -2519,7 +2754,7 @@ constSamplePtr WaveTrackCache::Get(sampleFormat format,
                const sampleCount len1 = mPTrack->GetBestBlockSize(start1);
                wxASSERT(len1 <= mBufferSize);
                if (!mPTrack->Get(samplePtr(mBuffers[1].data), floatSample, start1, len1))
-                  return false;
+                  return 0;
                mBuffers[1].start = start1;
                mBuffers[1].len = len1;
                mNValidBuffers = 2;
@@ -2569,7 +2804,7 @@ constSamplePtr WaveTrackCache::Get(sampleFormat format,
          // Very big request!
          // Fall back to direct fetch
          if (!mPTrack->Get(buffer, format, start, remaining))
-            return false;
+            return 0;
       }
 
       return mOverlapBuffer.ptr();

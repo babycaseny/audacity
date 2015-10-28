@@ -24,6 +24,7 @@ class wxKeyEvent;
 class wxTimer;
 class wxTimerEvent;
 class wxWindow;
+class wxStatusBar;
 
 class AButton;
 class AudacityProject;
@@ -78,12 +79,18 @@ class ControlToolBar:public ToolBar {
    // Stop playing
    void StopPlaying(bool stopStream = true);
 
+   // Pause - used by AudioIO to pause sound activate recording
+   void Pause();
+
    void Populate();
    virtual void Repaint(wxDC *dc);
    virtual void EnableDisableButtons();
 
    virtual void ReCreateButtons();
    void RegenerateToolsTooltips();
+
+   int WidthForStatusBar(wxStatusBar* const);
+   wxString StateForStatusBar();
 
  private:
 
@@ -102,6 +109,7 @@ class ControlToolBar:public ToolBar {
    void SetupCutPreviewTracks(double playStart, double cutStart,
                              double cutEnd, double playEnd);
    void ClearCutPreviewTracks();
+   void UpdateStatusBar();
 
    enum
    {
@@ -134,6 +142,12 @@ class ControlToolBar:public ToolBar {
    wxBoxSizer *mSizer;
 
    TrackList* mCutPreviewTracks;
+
+   // strings for status bar
+   wxString mStatePlay;
+   wxString mStateStop;
+   wxString mStateRecord;
+   wxString mStatePause;
 
  public:
 
